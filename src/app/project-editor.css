@@ -1,0 +1,78 @@
+.project-modal {
+  max-height: min(90vh, 820px);
+}
+
+.project-modal textarea {
+  min-height: 90px;
+  resize: vertical;
+}
+
+.project-modal input[type="color"] {
+  min-height: 39px;
+  padding: 4px;
+}
+
+.project-member-picker {
+  min-width: 0;
+  margin: 3px 0 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.project-member-picker legend {
+  padding: 0 5px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.project-member-option {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.project-member-option + .project-member-option {
+  border-top: 1px solid var(--line);
+}
+
+.project-member-option > label {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.project-member-option > label > input {
+  width: auto;
+}
+
+.project-member-option > label > span {
+  display: grid;
+  gap: 3px;
+}
+
+.project-member-option small {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 400;
+}
+
+.project-member-option select {
+  width: auto;
+  min-width: 95px;
+}
+
+@media (max-width: 560px) {
+  .project-modal {
+    padding: 18px;
+  }
+
+  .project-member-picker {
+    padding: 8px;
+  }
+}

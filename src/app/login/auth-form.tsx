@@ -1,0 +1,103 @@
+"use client";
+
+import { FormEvent, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
+import { getSupabaseConfigurationError } from "@/lib/supabase/config";
+
+type AuthMode = "Sign in" | "Create account";
+
+export function AuthForm({ initialMode = "Sign in" }: { initialMode?: AuthMode }) {
+  const router = useRouter();
+  const [mode, setMode] = useState<AuthMode>(initialMode);
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const error = new URLSearchParams(window.location.search).get("auth_error");
+    if (!error) return;
+    const messages: Record<string, string> = {
+      configuration: getSupabaseConfigurationError() ?? "Supabase configuration is invalid. Check .env.local and restart pnpm dev.",
+      email_not_confirmed: "Confirm your email using the latest message from Supabase, then sign in again.",
+      otp_expired: "This confirmation link has expired or was already used. Request a new confirmation email.",
+      access_denied: "The authentication link was declined or is no longer valid. Request a new link.",
+      callback: "The authentication link could not be completed. Request a fresh confirmation email or sign in again.",
+    };
+    const timer = window.setTimeout(() => setMessage(messages[error] ?? messages.callback), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setLoading(true);
+    setMessage("");
+    try {
+      const supabase = createClient();
+      if (!supabase) {
+        setMessage(getSupabaseConfigurationError() ?? "Supabase configuration is invalid. Check .env.local and restart pnpm dev.");
+        return;
+      }
+
+      const invite = new URLSearchParams(window.location.search).get("invite");
+      const result = mode === "Sign in"
+        ? await supabase.auth.signInWithPassword({ email: email.trim(), password })
+        : await supabase.auth.signUp({
+          email: email.trim(),
+          password,
+          options: {
+            data: { full_name: fullName.trim() },
+            emailRedirectTo: invite
+              ? `${window.location.origin}/auth/callback?invite=${encodeURIComponent(invite)}`
+              : `${window.location.origin}/auth/callback`,
+          },
+        });
+      if (result.error) {
+        if (result.error.code === "email_not_confirmed") {
+          setMessage("Confirm your email using the latest message from Supabase, then sign in again.");
+        } else if (result.error.code === "invalid_credentials") {
+          setMessage("Supabase could not sign in with that email and password. Check both fields and try again.");
+        } else {
+          setMessage(result.error.message);
+        }
+        return;
+      }
+      if (mode === "Create account" && !result.data.session) {
+        setMessage("Check your email to confirm your account. You’ll return to your workspace automatically.");
+        return;
+      }
+
+      if (invite) {
+        const { data: workspaceId, error } = await supabase.rpc("accept_workspace_invitation", { invitation_token: invite });
+        if (error) {
+          setMessage(error.message);
+          return;
+        }
+        localStorage.setItem("orbit-workspace", workspaceId);
+      }
+      router.replace("/");
+      router.refresh();
+    } catch (error) {
+      setMessage(error instanceof Error
+        ? `Authentication request failed: ${error.message}`
+        : "Authentication request failed before Supabase returned an error. Check your connection and try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function changeMode(nextMode: AuthMode) {
+    setMode(nextMode);
+    setMessage("");
+  }
+
+  return <div className="auth-shell"><div className="auth-card"><div className="brand-mark">◈</div><h1>Welcome to Orbit</h1><p>Your team’s work, moving forward.</p><form onSubmit={submit}>
+    {mode === "Create account" && <label>Full name<input required minLength={2} maxLength={100} autoComplete="name" value={fullName} onChange={event => setFullName(event.target.value)} /></label>}
+    <label>Email address<input required type="email" autoComplete="email" maxLength={254} value={email} onChange={event => setEmail(event.target.value)} /></label>
+    <label>Password<input required minLength={6} type="password" autoComplete={mode === "Sign in" ? "current-password" : "new-password"} value={password} onChange={event => setPassword(event.target.value)} /></label>
+    {message && <span className="auth-error" role="alert">{message}</span>}
+    <button className="primary-button auth-submit" disabled={loading}>{loading ? "Please wait…" : mode}</button>
+  </form><button className="auth-switch" type="button" onClick={() => changeMode(mode === "Sign in" ? "Create account" : "Sign in")}>{mode === "Sign in" ? "New to Orbit? Create an account" : "Already have an account? Sign in"}</button></div></div>;
+}
