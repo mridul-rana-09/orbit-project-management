@@ -7,10 +7,12 @@ export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get("code");
   const invite = requestUrl.searchParams.get("invite");
-  const destination = new URL("/", requestUrl);
+  const requestedNext = requestUrl.searchParams.get("next");
+  const destination = new URL(requestedNext === "/reset-password" ? "/reset-password" : "/", requestUrl);
   const loginError = (reason = "callback") => {
     const url = new URL("/login", requestUrl);
     url.searchParams.set("auth_error", reason);
+    if (requestedNext === "/reset-password") url.searchParams.set("auth_flow", "recovery");
     return NextResponse.redirect(url);
   };
   const supabase = await createClient();

@@ -1,11 +1,12 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { getSupabaseConfigurationError } from "@/lib/supabase/config";
 
-type AuthMode = "Sign in" | "Create account";
+type AuthMode = "Sign in" | "Create account" | "Reset password";
 
 export function AuthForm({ initialMode = "Sign in" }: { initialMode?: AuthMode }) {
   const router = useRouter();
@@ -42,6 +43,17 @@ export function AuthForm({ initialMode = "Sign in" }: { initialMode?: AuthMode }
       }
 
       const invite = new URLSearchParams(window.location.search).get("invite");
+      if (mode === "Reset password") {
+        const recoveryRedirectTo = new URL("/auth/callback", window.location.origin);
+        recoveryRedirectTo.searchParams.set("next", "/reset-password");
+        const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: recoveryRedirectTo.toString() });
+        if (error) {
+          setMessage(error.message);
+          return;
+        }
+        setMessage("If an account exists for that email, Supabase will send a password reset link.");
+        return;
+      }
       const result = mode === "Sign in"
         ? await supabase.auth.signInWithPassword({ email: email.trim(), password })
         : await supabase.auth.signUp({
@@ -93,11 +105,16 @@ export function AuthForm({ initialMode = "Sign in" }: { initialMode?: AuthMode }
     setMessage("");
   }
 
-  return <div className="auth-shell"><div className="auth-card"><div className="brand-mark">◈</div><h1>Welcome to Orbit</h1><p>Your team’s work, moving forward.</p><form onSubmit={submit}>
+  return <div className="auth-shell"><div className="auth-card"><div className="brand-mark">◈</div><h1>{mode === "Reset password" ? "Reset your password" : "Welcome to Orbit"}</h1><p>Your team’s work, moving forward.</p><form onSubmit={submit}>
     {mode === "Create account" && <label>Full name<input required minLength={2} maxLength={100} autoComplete="name" value={fullName} onChange={event => setFullName(event.target.value)} /></label>}
     <label>Email address<input required type="email" autoComplete="email" maxLength={254} value={email} onChange={event => setEmail(event.target.value)} /></label>
-    <label>Password<input required minLength={6} type="password" autoComplete={mode === "Sign in" ? "current-password" : "new-password"} value={password} onChange={event => setPassword(event.target.value)} /></label>
+    {mode !== "Reset password" && <label>Password<input required minLength={6} type="password" autoComplete={mode === "Sign in" ? "current-password" : "new-password"} value={password} onChange={event => setPassword(event.target.value)} /></label>}
     {message && <span className="auth-error" role="alert">{message}</span>}
-    <button className="primary-button auth-submit" disabled={loading}>{loading ? "Please wait…" : mode}</button>
-  </form><button className="auth-switch" type="button" onClick={() => changeMode(mode === "Sign in" ? "Create account" : "Sign in")}>{mode === "Sign in" ? "New to Orbit? Create an account" : "Already have an account? Sign in"}</button></div></div>;
+    <button className="primary-button auth-submit" disabled={loading}>{loading ? "Please wait…" : mode === "Reset password" ? "Send reset link" : mode}</button>
+  </form>
+  {mode === "Sign in" && <Link className="auth-switch" href="/forgot-password">Forgot your password?</Link>}
+  {initialMode === "Reset password"
+    ? <Link className="auth-switch" href="/login">Back to sign in</Link>
+    : <button className="auth-switch" type="button" onClick={() => changeMode(mode === "Sign in" ? "Create account" : "Sign in")}>{mode === "Sign in" ? "New to Orbit? Create an account" : "Back to sign in"}</button>}
+  </div></div>;
 }
