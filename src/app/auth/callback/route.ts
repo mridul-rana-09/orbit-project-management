@@ -25,6 +25,9 @@ export async function GET(request: Request) {
     if (callbackError === "otp_expired" || callbackError === "email_not_confirmed" || callbackError === "access_denied") {
       return loginError(callbackError);
     }
+    if (requestedNext === "/reset-password" && !callbackError) {
+      return NextResponse.redirect(new URL("/auth/confirm?flow=recovery", requestUrl));
+    }
     return loginError("callback");
   }
 
