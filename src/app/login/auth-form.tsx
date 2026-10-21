@@ -8,6 +8,13 @@ import { getSupabaseConfigurationError } from "@/lib/supabase/config";
 
 type AuthMode = "Sign in" | "Create account" | "Reset password";
 
+function isEmailRateLimitError(error: { code?: string; message: string; status?: number }): boolean {
+  return error.code === "over_email_send_rate_limit" ||
+    error.code === "email_rate_limit_exceeded" ||
+    error.status === 429 ||
+    /email.{0,20}rate.?limit|rate.?limit.{0,20}email/i.test(error.message);
+}
+
 export function AuthForm({ initialMode = "Sign in" }: { initialMode?: AuthMode }) {
   const router = useRouter();
   const [mode, setMode] = useState<AuthMode>(initialMode);
@@ -16,6 +23,7 @@ export function AuthForm({ initialMode = "Sign in" }: { initialMode?: AuthMode }
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [emailRateLimited, setEmailRateLimited] = useState(false);
 
   useEffect(() => {
     const error = new URLSearchParams(window.location.search).get("auth_error");
@@ -48,10 +56,15 @@ export function AuthForm({ initialMode = "Sign in" }: { initialMode?: AuthMode }
         recoveryRedirectTo.searchParams.set("next", "/reset-password");
         const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: recoveryRedirectTo.toString() });
         if (error) {
-          setMessage(error.message);
+          if (isEmailRateLimitError(error)) {
+            setEmailRateLimited(true);
+            setMessage("Supabase rejected this reset-email request because its email-send rate limit has been reached; no email was sent for this attempt. Check for an earlier reset email and use the newest link. Wait for Supabase's configured limit window to reset, then reload this page before trying once.");
+          } else {
+            setMessage(error.message);
+          }
           return;
         }
-        setMessage("If an account exists for that email, Supabase will send a password reset link.");
+        setMessage("Supabase accepted the request. If an account exists for that email, a reset message should arrive shortly. Check your inbox and spam folder before requesting another.");
         return;
       }
       const result = mode === "Sign in"
