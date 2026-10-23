@@ -13,12 +13,17 @@ export async function GET(request: Request) {
   const otpType = (requestUrl.searchParams.get("type") as EmailOtpType | null) || (requestUrl.searchParams.get("next") === "/reset-password" ? "recovery" : null);
   const invite = requestUrl.searchParams.get("invite");
   const requestedNext = requestUrl.searchParams.get("next");
-  const destination = new URL(requestedNext === "/reset-password" ? "/reset-password" : "/", requestUrl);
+  const isRecoveryFlow = requestedNext === "/reset-password" || otpType === "recovery";
+  const destination = new URL(isRecoveryFlow ? "/reset-password" : "/", requestUrl);
 
   const loginError = (reason = "callback") => {
+    if (isRecoveryFlow) {
+      const resetUrl = new URL("/reset-password", requestUrl);
+      resetUrl.searchParams.set("auth_error", reason);
+      return NextResponse.redirect(resetUrl);
+    }
     const url = new URL("/login", requestUrl);
     url.searchParams.set("auth_error", reason);
-    if (requestedNext === "/reset-password") url.searchParams.set("auth_flow", "recovery");
     return NextResponse.redirect(url);
   };
 
@@ -65,7 +70,7 @@ export async function GET(request: Request) {
       const isExpired = error.code === "otp_expired" || /expired|already used/i.test(error.message);
       return loginError(isExpired ? "otp_expired" : "invalid_link");
     }
-  } else if (requestedNext === "/reset-password") {
+  } else if (isRecoveryFlow) {
     // If neither code nor token_hash is present on the server, the user may have arrived with
     // a hash fragment (#access_token=...&refresh_token=...&type=recovery).
     // The server cannot see hash fragments, so redirect directly to /reset-password to let the client handle it.
