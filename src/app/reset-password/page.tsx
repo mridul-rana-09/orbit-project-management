@@ -12,8 +12,13 @@ export default async function ResetPasswordPage() {
   const supabase = await createClient();
   if (!supabase) redirect("/login?auth_error=configuration");
 
-  const { data: { user }, error } = await supabase.auth.getUser();
-  if (error || !user) redirect("/login?auth_error=invalid_link");
+  let hasServerSession = false;
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    hasServerSession = Boolean(user);
+  } catch {
+    hasServerSession = false;
+  }
 
-  return <ResetPasswordClient />;
+  return <ResetPasswordClient initialHasSession={hasServerSession} />;
 }
