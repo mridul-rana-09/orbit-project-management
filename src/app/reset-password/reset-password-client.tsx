@@ -15,10 +15,6 @@ export default function ResetPasswordClient({ initialHasSession = false }: { ini
   const [updated, setUpdated] = useState(false);
 
   useEffect(() => {
-    if (initialHasSession) {
-      return;
-    }
-
     let isMounted = true;
 
     async function checkAndEstablishSession() {
@@ -38,14 +34,28 @@ export default function ResetPasswordClient({ initialHasSession = false }: { ini
         const errorCode = hashParams.get("error_code") || searchParams.get("error_code") || searchParams.get("auth_error");
         if (errorCode === "otp_expired") {
           if (isMounted) {
-            setSessionError("This password reset link has expired or was already used. Request a fresh reset link.");
+            setSessionError("This password reset link has expired or was already used. Request a fresh reset link below.");
+            setVerifying(false);
+          }
+          return;
+        }
+        if (errorCode === "access_denied") {
+          if (isMounted) {
+            setSessionError("The password reset request was declined or is no longer valid. Request a fresh reset link below.");
+            setVerifying(false);
+          }
+          return;
+        }
+        if (errorCode === "invalid_link" || errorCode === "callback") {
+          if (isMounted) {
+            setSessionError("This password reset link could not be verified (it may have expired or was opened in a different browser). Request a fresh reset link below.");
             setVerifying(false);
           }
           return;
         }
         if (errorCode) {
           if (isMounted) {
-            setSessionError("This password reset link could not be verified. Request a fresh reset link.");
+            setSessionError("This password reset link could not be verified. Request a fresh reset link below.");
             setVerifying(false);
           }
           return;
@@ -142,7 +152,7 @@ export default function ResetPasswordClient({ initialHasSession = false }: { ini
     }
 
     const authClient = createClient();
-    const subscription = authClient?.auth.onAuthStateChange((event, session) => {
+    const authListener = authClient?.auth.onAuthStateChange((event, session) => {
       if ((event === "PASSWORD_RECOVERY" || event === "SIGNED_IN") && session) {
         if (isMounted) {
           setHasSession(true);
@@ -150,15 +160,15 @@ export default function ResetPasswordClient({ initialHasSession = false }: { ini
           setSessionError("");
         }
       }
-    }).data.subscription;
+    });
 
     void checkAndEstablishSession();
 
     return () => {
       isMounted = false;
-      subscription?.unsubscribe();
+      authListener?.data.subscription?.unsubscribe();
     };
-  }, [initialHasSession]);
+  }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

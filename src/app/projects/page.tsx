@@ -21,5 +21,5 @@ export default async function ProjectsPage({ searchParams }: { searchParams: Pro
     ? metadataName
     : user.email?.split("@")[0] ?? "Account";
 
-  return <ProjectsClient userName={userName} openCreate={params.new === "1"} />;
+  return <ProjectsClient userId={user.id} userName={userName} openCreate={params.new === "1"} />;
 }

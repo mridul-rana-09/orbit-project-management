@@ -76,7 +76,7 @@ export default function RecoveryConfirmation({ tokenHash, recoveryFlow }: { toke
       }
 
       setConfirmed(true);
-      router.replace("/reset-password");
+      router.replace("/update-password");
       router.refresh();
     } catch (error) {
       setMessage(error instanceof Error

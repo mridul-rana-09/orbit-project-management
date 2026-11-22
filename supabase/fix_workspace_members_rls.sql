@@ -1,92 +1,77 @@
--- Run this in the Supabase SQL Editor against the existing project.
--- This is a targeted repair for the infinite recursion in the workspace_members RLS policy.
--- It does not reset or recreate the database and only replaces the recursive policy on workspace_members.
+-- Run this in the Supabase SQL Editor against an existing Orbit schema.
+-- Replaces every workspace_members policy with checks that use security-definer
+-- helpers, avoiding recursive reads of the RLS-protected membership table.
+-- This targeted repair does not recreate tables or change stored rows.
 
-ALTER TABLE public.workspace_members ENABLE ROW LEVEL SECURITY;
+begin;
 
-DROP POLICY IF EXISTS "Members read membership" ON public.workspace_members;
-CREATE POLICY "Members read membership"
-ON public.workspace_members
-FOR SELECT
-USING (
-  profile_id = auth.uid()
-  OR EXISTS (
-    SELECT 1
-    FROM public.workspace_members AS membership
-    WHERE membership.workspace_id = workspace_members.workspace_id
-      AND membership.profile_id = auth.uid()
-      AND membership.role IN ('owner', 'admin')
-  )
-);
+alter table public.workspace_members enable row level security;
 
-DROP POLICY IF EXISTS "Admins manage membership" ON public.workspace_members;
-CREATE POLICY "Admins manage membership"
-ON public.workspace_members
-FOR INSERT
-WITH CHECK (
-  EXISTS (
-    SELECT 1
-    FROM public.workspace_members AS membership
-    WHERE membership.workspace_id = workspace_members.workspace_id
-      AND membership.profile_id = auth.uid()
-      AND membership.role IN ('owner', 'admin')
-  )
-  AND role <> 'owner'
-);
+create or replace function public.is_workspace_member(target_workspace uuid)
+returns boolean
+language sql stable security definer
+set search_path = public
+set row_security = off
+as $$
+  select exists (
+    select 1 from public.workspace_members
+    where workspace_id = target_workspace and profile_id = auth.uid()
+  );
+$$;
 
-DROP POLICY IF EXISTS "Admins update membership" ON public.workspace_members;
-CREATE POLICY "Admins update membership"
-ON public.workspace_members
-FOR UPDATE
-USING (
-  profile_id = auth.uid()
-  OR EXISTS (
-    SELECT 1
-    FROM public.workspace_members AS membership
-    WHERE membership.workspace_id = workspace_members.workspace_id
-      AND membership.profile_id = auth.uid()
-      AND membership.role IN ('owner', 'admin')
-  )
+create or replace function public.has_workspace_role(
+  target_workspace uuid,
+  target_roles public.workspace_role[]
 )
-WITH CHECK (
-  EXISTS (
-    SELECT 1
-    FROM public.workspace_members AS membership
-    WHERE membership.workspace_id = workspace_members.workspace_id
-      AND membership.profile_id = auth.uid()
-      AND membership.role IN ('owner', 'admin')
-  )
-  AND role <> 'owner'
-  AND (
+returns boolean
+language sql stable security definer
+set search_path = public
+set row_security = off
+as $$
+  select exists (
+    select 1 from public.workspace_members
+    where workspace_id = target_workspace
+      and profile_id = auth.uid()
+      and role = any(target_roles)
+  );
+$$;
+
+revoke all on function public.is_workspace_member(uuid) from public, anon;
+revoke all on function public.has_workspace_role(uuid, public.workspace_role[]) from public, anon;
+grant execute on function public.is_workspace_member(uuid) to authenticated;
+grant execute on function public.has_workspace_role(uuid, public.workspace_role[]) to authenticated;
+grant select, insert, update, delete on public.workspace_members to authenticated;
+
+-- Policies are OR-combined, so remove stale/custom policies with any name.
+do $$
+declare policy_name text;
+begin
+  for policy_name in
+    select polname
+    from pg_policy
+    where polrelid = 'public.workspace_members'::regclass
+  loop
+    execute format('drop policy %I on public.workspace_members', policy_name);
+  end loop;
+end
+$$;
+
+create policy "Members read membership" on public.workspace_members
+for select using (public.is_workspace_member(workspace_id));
+
+create policy "Admins manage membership" on public.workspace_members
+for all
+using (
+  role <> 'owner'
+  and public.has_workspace_role(workspace_id, array['owner', 'admin']::public.workspace_role[])
+)
+with check (
+  public.has_workspace_role(workspace_id, array['owner', 'admin']::public.workspace_role[])
+  and role <> 'owner'
+  and (
     role <> 'admin'
-    OR EXISTS (
-      SELECT 1
-      FROM public.workspace_members AS owner_membership
-      WHERE owner_membership.workspace_id = workspace_members.workspace_id
-        AND owner_membership.profile_id = auth.uid()
-        AND owner_membership.role = 'owner'
-    )
+    or public.has_workspace_role(workspace_id, array['owner']::public.workspace_role[])
   )
 );
 
-DROP POLICY IF EXISTS "Members leave workspace" ON public.workspace_members;
-CREATE POLICY "Members leave workspace"
-ON public.workspace_members
-FOR DELETE
-USING (
-  profile_id = auth.uid()
-  OR EXISTS (
-    SELECT 1
-    FROM public.workspace_members AS membership
-    WHERE membership.workspace_id = workspace_members.workspace_id
-      AND membership.profile_id = auth.uid()
-      AND membership.role IN ('owner', 'admin')
-  )
-);
-
--- Optional safety check: confirm the recursive policy is no longer in use.
-SELECT schemaname, tablename, policyname, permissive, roles, cmd, qual, with_check
-FROM pg_policies
-WHERE schemaname = 'public'
-  AND tablename = 'workspace_members'
-ORDER BY policyname;
+commit;

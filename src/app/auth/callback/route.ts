@@ -10,15 +10,15 @@ export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get("code");
   const tokenHash = requestUrl.searchParams.get("token_hash");
-  const otpType = (requestUrl.searchParams.get("type") as EmailOtpType | null) || (requestUrl.searchParams.get("next") === "/reset-password" ? "recovery" : null);
-  const invite = requestUrl.searchParams.get("invite");
   const requestedNext = requestUrl.searchParams.get("next");
-  const isRecoveryFlow = requestedNext === "/reset-password" || otpType === "recovery";
-  const destination = new URL(isRecoveryFlow ? "/reset-password" : "/", requestUrl);
+  const otpType = (requestUrl.searchParams.get("type") as EmailOtpType | null) || (["/reset-password", "/update-password"].includes(requestedNext ?? "") ? "recovery" : null);
+  const invite = requestUrl.searchParams.get("invite");
+  const isRecoveryFlow = ["/reset-password", "/update-password"].includes(requestedNext ?? "") || otpType === "recovery";
+  const destination = new URL(isRecoveryFlow ? "/update-password" : "/", requestUrl);
 
   const loginError = (reason = "callback") => {
     if (isRecoveryFlow) {
-      const resetUrl = new URL("/reset-password", requestUrl);
+      const resetUrl = new URL("/update-password", requestUrl);
       resetUrl.searchParams.set("auth_error", reason);
       return NextResponse.redirect(resetUrl);
     }
@@ -61,6 +61,15 @@ export async function GET(request: Request) {
   if (code) {
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (error) {
+      if (isRecoveryFlow) {
+        const resetUrl = new URL("/update-password", requestUrl);
+        resetUrl.searchParams.set("code", code);
+        const isExpired = error.code === "otp_expired" || /expired|already used/i.test(error.message);
+        if (isExpired) {
+          resetUrl.searchParams.set("auth_error", "otp_expired");
+        }
+        return NextResponse.redirect(resetUrl);
+      }
       const isExpired = error.code === "otp_expired" || /expired|already used|code.*verifier/i.test(error.message);
       return loginError(isExpired ? "otp_expired" : "invalid_link");
     }
@@ -73,22 +82,30 @@ export async function GET(request: Request) {
   } else if (isRecoveryFlow) {
     // If neither code nor token_hash is present on the server, the user may have arrived with
     // a hash fragment (#access_token=...&refresh_token=...&type=recovery).
-    // The server cannot see hash fragments, so redirect directly to /reset-password to let the client handle it.
-    return NextResponse.redirect(new URL("/reset-password", requestUrl));
+    // The server cannot see hash fragments, so redirect to the client recovery page.
+    return NextResponse.redirect(new URL("/update-password", requestUrl));
   } else {
     return loginError("callback");
   }
 
   if (invite) {
     if (!uuidPattern.test(invite)) {
-      return NextResponse.redirect(new URL("/team?invitation=invalid", requestUrl));
+      const redirectInvalid = NextResponse.redirect(new URL("/team?invitation=invalid", requestUrl));
+      response.cookies.getAll().forEach((c) => redirectInvalid.cookies.set(c.name, c.value, c));
+      return redirectInvalid;
     }
     const { data: workspaceId, error: invitationError } = await supabase.rpc("accept_workspace_invitation", { invitation_token: invite });
     if (invitationError) {
-      return NextResponse.redirect(new URL("/team?invitation=invalid", requestUrl));
+      const redirectFailed = NextResponse.redirect(new URL("/team?invitation=invalid", requestUrl));
+      response.cookies.getAll().forEach((c) => redirectFailed.cookies.set(c.name, c.value, c));
+      return redirectFailed;
     }
-    destination.searchParams.set("workspace", workspaceId);
-    response = NextResponse.redirect(destination);
+    if (workspaceId) {
+      destination.searchParams.set("workspace", String(workspaceId));
+    }
+    const redirectResponse = NextResponse.redirect(destination);
+    response.cookies.getAll().forEach((c) => redirectResponse.cookies.set(c.name, c.value, c));
+    response = redirectResponse;
   }
 
   return response;

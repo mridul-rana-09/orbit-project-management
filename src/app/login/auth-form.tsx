@@ -28,21 +28,22 @@ function getAuthErrorMessage(error: { code?: string; message: string; status?: n
 
   switch (error.code) {
     case "email_not_confirmed":
-      return "Confirm your email using the latest message from Supabase, then sign in again.";
+      return "Confirm your email using the confirmation message from Supabase, then sign in again.";
     case "invalid_credentials":
-      return "Supabase could not sign in with that email and password. Check both fields and try again.";
+      return "Invalid email or password. If you recently created your account, please confirm your email address first, or use 'Forgot your password?' below to reset it.";
     case "user_already_exists":
     case "email_exists":
       return "An account may already exist for this email. Try signing in instead.";
     case "signup_disabled":
       return "New account creation is currently disabled for this Supabase project.";
     case "over_email_send_rate_limit":
-      return "Supabase's email-send limit has been reached. No email was sent for this request. Wait for the configured limit window to reset, then reload and try once.";
+    case "email_rate_limit_exceeded":
+      return "Supabase email rate limit reached. Supabase restricts the number of emails sent per hour. Wait a while before trying again, or check your inbox/spam for earlier emails.";
     case "weak_password":
     case "password_too_short":
-      return "Choose a stronger password that meets this Supabase project's password requirements.";
+      return "Choose a stronger password that meets this Supabase project's password requirements (at least 6 characters).";
     case "redirect_to_not_allowed":
-      return "Supabase rejected the confirmation redirect URL. Add this app's /auth/callback URL to the Auth redirect allow list.";
+    return "Supabase rejected the redirect URL. Add this app's /auth/callback and /update-password URLs to the Auth redirect allow list in Supabase.";
     default:
       if (error.status !== undefined && error.status >= 500) {
         return "Supabase Auth is temporarily unavailable. Wait a moment and try again.";
@@ -63,7 +64,19 @@ export function AuthForm({ initialMode = "Sign in" }: { initialMode?: AuthMode }
   const [emailRateLimited, setEmailRateLimited] = useState(false);
 
   useEffect(() => {
+    const fragment = new URLSearchParams(window.location.hash.slice(1));
     const params = new URLSearchParams(window.location.search);
+
+    if (
+      fragment.get("type") === "recovery" ||
+      params.get("type") === "recovery" ||
+      ["/reset-password", "/update-password"].includes(params.get("next") ?? "") ||
+      (fragment.has("access_token") && window.location.hash.includes("recovery"))
+    ) {
+      window.location.replace(`/update-password${window.location.search}${window.location.hash}`);
+      return;
+    }
+
     const error = params.get("auth_error");
     if (!error) return;
     const isRecovery = params.get("auth_flow") === "recovery";
@@ -108,19 +121,18 @@ export function AuthForm({ initialMode = "Sign in" }: { initialMode?: AuthMode }
       const emailRedirectTo = new URL("/auth/callback", window.location.origin);
       if (invite) emailRedirectTo.searchParams.set("invite", invite);
       if (mode === "Reset password") {
-        const recoveryRedirectTo = new URL("/auth/callback", window.location.origin);
-        recoveryRedirectTo.searchParams.set("next", "/reset-password");
+        const recoveryRedirectTo = new URL("/update-password", window.location.origin);
         const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: recoveryRedirectTo.toString() });
         if (error) {
           if (isEmailRateLimitError(error)) {
             setEmailRateLimited(true);
-            setMessage("Supabase rejected this reset-email request because its email-send rate limit has been reached; no email was sent for this attempt. Check for an earlier reset email and use the newest link. Wait for Supabase's configured limit window to reset, then reload this page before trying once.");
+            setMessage("Supabase email rate limit reached. Supabase restricts the number of emails sent per hour on free projects. Check your inbox and spam folder for any earlier reset email, or wait ~60 minutes before requesting again.");
           } else {
             setMessage(getAuthErrorMessage(error));
           }
           return;
         }
-        setMessage("Supabase accepted the request. If an account exists for that email, a reset message should arrive shortly. Check your inbox and spam folder before requesting another.");
+        setMessage("Supabase accepted the request. If an account exists for that email, a password reset link has been sent. Check your inbox and spam folder.");
         return;
       }
 
@@ -138,7 +150,9 @@ export function AuthForm({ initialMode = "Sign in" }: { initialMode?: AuthMode }
           },
         });
       if (result.error) {
-        if (result.error.code === "email_not_confirmed") setVerificationPending(true);
+        if (result.error.code === "email_not_confirmed") {
+          setVerificationPending(true);
+        }
         setMessage(getAuthErrorMessage(result.error));
         return;
       }

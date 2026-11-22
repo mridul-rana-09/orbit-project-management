@@ -30,9 +30,21 @@ const questions = [
 function AuthLinkError() {
   useEffect(() => {
     const fragment = new URLSearchParams(window.location.hash.slice(1));
-    const error = fragment.get("error");
+    const searchParams = new URLSearchParams(window.location.search);
+
+    if (
+      fragment.get("type") === "recovery" ||
+      searchParams.get("type") === "recovery" ||
+      ["/reset-password", "/update-password"].includes(searchParams.get("next") ?? "") ||
+      (fragment.has("access_token") && window.location.hash.includes("recovery"))
+    ) {
+      window.location.replace(`/update-password${window.location.search}${window.location.hash}`);
+      return;
+    }
+
+    const error = fragment.get("error") || searchParams.get("error");
     if (error) {
-      const receivedCode = fragment.get("error_code");
+      const receivedCode = fragment.get("error_code") || searchParams.get("error_code");
       const allowedCodes = ["access_denied", "otp_expired", "email_not_confirmed"];
       const code = receivedCode && allowedCodes.includes(receivedCode) ? receivedCode : "callback";
       window.location.replace(`/login?auth_error=${encodeURIComponent(code)}`);

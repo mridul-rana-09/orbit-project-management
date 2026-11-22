@@ -3,6 +3,17 @@ import { databaseError, errorResponse, isIsoDateOrNull, isOneOf, isText, isUuid,
 
 const projectStatuses = ["Planning", "Active", "On Hold", "Completed", "Archived"] as const;
 const projectFields = ["name", "description", "status", "color", "start_date", "due_date"] as const;
+type SupabaseClient = NonNullable<Awaited<ReturnType<typeof requireAuthenticatedClient>>["supabase"]>;
+
+async function requireWorkspaceManager(supabase: SupabaseClient, workspaceId: string, userId: string) {
+  const { data: membership, error } = await supabase.from("workspace_members")
+    .select("role").eq("workspace_id", workspaceId).eq("profile_id", userId).maybeSingle();
+  if (error) return databaseError(error);
+  if (membership?.role !== "owner" && membership?.role !== "admin") {
+    return errorResponse("Only workspace owners and admins can manage projects.", 403);
+  }
+  return null;
+}
 
 function isColor(value: unknown): value is string {
   return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
@@ -28,6 +39,8 @@ export async function POST(request: Request) {
   const { supabase, user, response } = await requireAuthenticatedClient();
   if (response) return response;
   if (!supabase || !user) return errorResponse("Unauthorized", 401);
+  const accessResponse = await requireWorkspaceManager(supabase, body.workspace_id, user.id);
+  if (accessResponse) return accessResponse;
   const { data, error } = await supabase.from("projects").insert({
     workspace_id: body.workspace_id,
     name: body.name.trim(),
@@ -48,9 +61,15 @@ export async function PATCH(request: Request) {
   if (!isOptionalProjectFieldsValid(body) || !isDateRangeValid(body)) return errorResponse("Project status, description, color, or dates are invalid.");
   const updates = Object.fromEntries(projectFields.filter((key) => key in body).map((key) => [key, key === "name" && typeof body[key] === "string" ? body[key].trim() : body[key]]));
   if (Object.keys(updates).length === 0) return errorResponse("Provide at least one project field to update.");
-  const { supabase, response } = await requireAuthenticatedClient();
+  const { supabase, user, response } = await requireAuthenticatedClient();
   if (response) return response;
-  if (!supabase) return errorResponse("Supabase is not configured", 503);
+  if (!supabase || !user) return errorResponse("Unauthorized", 401);
+  const { data: project, error: projectError } = await supabase.from("projects")
+    .select("workspace_id").eq("id", body.id).maybeSingle();
+  if (projectError) return databaseError(projectError);
+  if (!project) return errorResponse("Project not found or access was denied.", 404);
+  const accessResponse = await requireWorkspaceManager(supabase, project.workspace_id, user.id);
+  if (accessResponse) return accessResponse;
   const { data, error } = await supabase.from("projects").update(updates).eq("id", body.id).select().single();
   if (error) return databaseError(error);
   return NextResponse.json(data);

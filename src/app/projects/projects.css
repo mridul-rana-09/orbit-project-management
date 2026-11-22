@@ -947,6 +947,20 @@
   font-size: 9px;
 }
 
+.projects-task-create textarea {
+  grid-column: 1 / -1;
+  min-width: 0;
+  min-height: 48px;
+  padding: 8px;
+  border: 1px solid var(--projects-line);
+  border-radius: 7px;
+  background: var(--projects-surface);
+  color: var(--projects-text);
+  font: inherit;
+  font-size: 9px;
+  resize: vertical;
+}
+
 .projects-task-list {
   display: grid;
 }

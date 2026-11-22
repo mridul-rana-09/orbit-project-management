@@ -159,14 +159,14 @@ declare invite public.workspace_invitations%rowtype; account_email text;
 begin
  if auth.uid() is null then raise exception 'Authentication required'; end if;
  select email into account_email from auth.users where id=auth.uid();
- select * into invite from public.workspace_invitations where token=invitation_token and lower(email)=lower(account_email) and expires_at>now() for update;
- if invite.id is null then raise exception 'Invitation is invalid, expired, or belongs to another account'; end if;
+ select * into invite from public.workspace_invitations where token=invitation_token and lower(email)=lower(account_email) and expires_at>now() and accepted_at is null for update;
+ if invite.id is null then raise exception 'Invitation is invalid, expired, already accepted, or belongs to another account'; end if;
  if invite.role='owner' or (invite.role='admin' and not exists(
   select 1 from public.workspace_members
   where workspace_id=invite.workspace_id and profile_id=invite.invited_by and role='owner'
  )) then raise exception 'Invitation role is no longer authorized'; end if;
  insert into public.workspace_members(workspace_id,profile_id,role) values(invite.workspace_id,auth.uid(),invite.role)
- on conflict(workspace_id,profile_id) do update set role=excluded.role;
+ on conflict(workspace_id,profile_id) do nothing;
  update public.workspace_invitations set accepted_at=now() where id=invite.id;
  return invite.workspace_id;
 end $$;

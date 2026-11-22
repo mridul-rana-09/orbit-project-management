@@ -192,8 +192,9 @@ begin
   where token = invitation_token
     and lower(email) = lower(account_email)
     and expires_at > now()
+    and accepted_at is null
   for update;
-  if invite.id is null then raise exception 'Invitation is invalid, expired, or belongs to another account'; end if;
+  if invite.id is null then raise exception 'Invitation is invalid, expired, already accepted, or belongs to another account'; end if;
   if invite.role = 'owner' or (invite.role = 'admin' and not exists (
     select 1 from public.workspace_members
     where workspace_id = invite.workspace_id
@@ -202,7 +203,7 @@ begin
   )) then raise exception 'Invitation role is no longer authorized'; end if;
   insert into public.workspace_members(workspace_id, profile_id, role)
   values (invite.workspace_id, auth.uid(), invite.role)
-  on conflict (workspace_id, profile_id) do update set role = excluded.role;
+  on conflict (workspace_id, profile_id) do nothing;
   update public.workspace_invitations set accepted_at = now() where id = invite.id;
   return invite.workspace_id;
 end;

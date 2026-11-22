@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -45,6 +45,7 @@ type Task = {
 type Activity = { id: string; project_id: string | null; action: string; created_at: string; actor?: { full_name: string } | null; details?: Record<string, unknown> };
 type Comment = { id: string; body: string; created_at: string; author?: { full_name: string; avatar_url: string | null } | null };
 type ProjectDraft = { id?: string; name: string; description: string; status: ProjectStatus; color: string; start_date: string; due_date: string };
+type TaskDraft = { title: string; description?: string; status: TaskStatus; priority: TaskPriority; due_date: string; assignee_id: string };
 
 const projectStatuses: ProjectStatus[] = ["Planning", "Active", "On Hold", "Completed", "Archived"];
 const taskStatuses: TaskStatus[] = ["Backlog", "To Do", "In Progress", "In Review", "Completed"];
@@ -182,7 +183,7 @@ function TaskComments({ taskId }: { taskId: string }) {
 
 const emptyProjectDraft = (): ProjectDraft => ({ name: "", description: "", status: "Planning", color: "#7968e8", start_date: "", due_date: "" });
 
-export default function ProjectsClient({ userName, openCreate }: { userName: string; openCreate: boolean }) {
+export default function ProjectsClient({ userId, userName, openCreate }: { userId: string; userName: string; openCreate: boolean }) {
   const router = useRouter();
   const [workspaces, setWorkspaces] = useState<WorkspaceMembership[]>([]);
   const [workspaceId, setWorkspaceId] = useState("");
@@ -197,19 +198,23 @@ export default function ProjectsClient({ userName, openCreate }: { userName: str
   const [statusFilter, setStatusFilter] = useState("All statuses");
   const [sortBy, setSortBy] = useState<"deadline" | "recent">("deadline");
   const [view, setView] = useState<"grid" | "list">("grid");
-  const [draft, setDraft] = useState<ProjectDraft | null>(() => openCreate ? emptyProjectDraft() : null);
+  const [draft, setDraft] = useState<ProjectDraft | null>(null);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState("");
   const [demoBusy, setDemoBusy] = useState(false);
   const [detailId, setDetailId] = useState("");
-  const [taskDraft, setTaskDraft] = useState({ title: "", status: "To Do" as TaskStatus, priority: "Medium" as TaskPriority, due_date: "" });
+  const [taskDraft, setTaskDraft] = useState<TaskDraft>({ title: "", description: "", status: "To Do", priority: "Medium", due_date: "", assignee_id: "" });
   const [taskBusy, setTaskBusy] = useState(false);
   const [openComments, setOpenComments] = useState("");
   const [loadedKey, setLoadedKey] = useState("");
+  const createOpened = useRef(false);
 
   const membership = workspaces.find((item) => item.workspace_id === workspaceId);
   const currentRole = membership?.role ?? "member";
   const canDeleteProjects = currentRole === "owner" || currentRole === "admin";
+  const canManageProjectTasks = useCallback((project: Project) => canDeleteProjects
+    || (project.project_members ?? []).some((item) => item.profile_id === userId && item.role === "lead"), [canDeleteProjects, userId]);
+  const canUpdateTask = (project: Project, task: Task) => canManageProjectTasks(project) || task.assignee_id === userId;
   const loading = initializing || (!!workspaceId && loadedKey !== `${workspaceId}:${reloadKey}`);
   const activeProject = projects.find((project) => project.id === detailId);
   const activeProjectTasks = useMemo(() => tasks.filter((task) => task.project_id === detailId), [tasks, detailId]);
@@ -234,6 +239,13 @@ export default function ProjectsClient({ userName, openCreate }: { userName: str
       .finally(() => { if (!cancelled) setInitializing(false); });
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    if (openCreate && canDeleteProjects && !createOpened.current) {
+      createOpened.current = true;
+      setDraft(emptyProjectDraft());
+    }
+  }, [openCreate, canDeleteProjects]);
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -312,6 +324,10 @@ export default function ProjectsClient({ userName, openCreate }: { userName: str
 
   async function saveProject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!canDeleteProjects) {
+      notify("Only workspace owners and Team Leaders can manage projects.");
+      return;
+    }
     if (!draft || !workspaceId) return;
     const name = draft.name.trim();
     if (!name || name.length > 120) {
@@ -353,30 +369,43 @@ export default function ProjectsClient({ userName, openCreate }: { userName: str
   }
 
   async function addDemoProjects() {
-    if (!workspaceId || demoBusy) return;
-    const confirmed = window.confirm("Create five sample projects in the current workspace? Existing demo projects will be left unchanged.");
+    if (!canDeleteProjects || !workspaceId || demoBusy) return;
+    const confirmed = window.confirm("Add three sample projects and fifteen realistic tasks to the current workspace? Existing projects and tasks will be left unchanged.");
     if (!confirmed) return;
     setDemoBusy(true);
     try {
-      const result = await requestJson<{ created: Project[]; skipped: string[] }>("/api/projects/demo", {
+      const result = await requestJson<{ created: Project[]; skipped: string[]; tasksCreated: number; teammatesAdded: number; tasksAssigned: number }>("/api/projects/demo", {
         method: "POST",
         body: JSON.stringify({ workspace_id: workspaceId }),
       });
       if (result.created.length) {
         setProjects((current) => [...result.created, ...current.filter((project) => !result.created.some((created) => created.id === project.id))]);
-        setReloadKey((key) => key + 1);
       }
-      notify(result.created.length
-        ? `${result.created.length} demo project${result.created.length === 1 ? "" : "s"} saved; ${result.skipped.length} already existed.`
-        : "Demo projects already exist. No duplicates were added.");
+      if (result.created.length || result.tasksCreated || result.teammatesAdded || result.tasksAssigned) setReloadKey((key) => key + 1);
+      notify(result.created.length || result.tasksCreated
+        ? `${result.created.length} project${result.created.length === 1 ? "" : "s"}, ${result.tasksCreated} task${result.tasksCreated === 1 ? "" : "s"}, and ${result.teammatesAdded} existing workspace member${result.teammatesAdded === 1 ? "" : "s"} added; ${result.skipped.length} demo project${result.skipped.length === 1 ? "" : "s"} already existed.`
+        : result.teammatesAdded || result.tasksAssigned
+         ? `Added ${result.teammatesAdded} existing workspace member${result.teammatesAdded === 1 ? "" : "s"} to the demo projects and assigned ${result.tasksAssigned} sample task${result.tasksAssigned === 1 ? "" : "s"}.`
+        : "Demo projects and tasks already exist. No duplicates were added.");
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : "Demo projects could not be created.";
       const partial = reason instanceof ApiRequestError
         && reason.payload !== null && typeof reason.payload === "object" && "created" in reason.payload
         && Array.isArray(reason.payload.created) ? reason.payload.created as Project[] : [];
+      const partialTaskCount = reason instanceof ApiRequestError
+        && reason.payload !== null && typeof reason.payload === "object" && "tasksCreated" in reason.payload
+        && typeof reason.payload.tasksCreated === "number" ? reason.payload.tasksCreated : 0;
+      const partialTeammateCount = reason instanceof ApiRequestError
+        && reason.payload !== null && typeof reason.payload === "object" && "teammatesAdded" in reason.payload
+        && typeof reason.payload.teammatesAdded === "number" ? reason.payload.teammatesAdded : 0;
+      const partialAssignedCount = reason instanceof ApiRequestError
+        && reason.payload !== null && typeof reason.payload === "object" && "tasksAssigned" in reason.payload
+        && typeof reason.payload.tasksAssigned === "number" ? reason.payload.tasksAssigned : 0;
       if (partial.length) {
         setProjects((current) => [...partial, ...current.filter((project) => !partial.some((created) => created.id === project.id))]);
-        notify(`${partial.length} demo project${partial.length === 1 ? "" : "s"} were saved before this error: ${message}`);
+        notify(`${partial.length} demo project${partial.length === 1 ? "" : "s"}, ${partialTaskCount} sample task${partialTaskCount === 1 ? "" : "s"}, and ${partialTeammateCount} existing workspace member${partialTeammateCount === 1 ? "" : "s"} were saved before this error: ${message}`);
+      } else if (partialTaskCount || partialTeammateCount || partialAssignedCount) {
+        notify(`${partialTaskCount} sample task${partialTaskCount === 1 ? "" : "s"}, ${partialTeammateCount} existing workspace member${partialTeammateCount === 1 ? "" : "s"}, and ${partialAssignedCount} sample task${partialAssignedCount === 1 ? "" : "s"} assignment${partialAssignedCount === 1 ? "" : "s"} were saved before this error: ${message}`);
       } else {
         notify(`Demo projects could not be created: ${message}`);
       }
@@ -406,14 +435,31 @@ export default function ProjectsClient({ userName, openCreate }: { userName: str
   async function createTask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!activeProject || !taskDraft.title.trim()) return;
+    if (!canManageProjectTasks(activeProject)) {
+      notify("Only workspace owners, Team Leaders, and project leads can create tasks.");
+      return;
+    }
     setTaskBusy(true);
     try {
       const saved = await requestJson<Task>("/api/tasks", {
         method: "POST",
-        body: JSON.stringify({ project_id: activeProject.id, title: taskDraft.title.trim(), status: taskDraft.status, priority: taskDraft.priority, due_date: taskDraft.due_date || null }),
+        body: JSON.stringify({
+          project_id: activeProject.id,
+          title: taskDraft.title.trim(),
+          description: taskDraft.description?.trim() ?? "",
+          status: taskDraft.status,
+          priority: taskDraft.priority,
+          due_date: taskDraft.due_date || null,
+          assignee_id: taskDraft.assignee_id || null,
+        }),
       });
-      setTasks((current) => [...current, saved]);
-      setTaskDraft({ title: "", status: "To Do", priority: "Medium", due_date: "" });
+      const assigneeMember = members.find((m) => m.profile_id === taskDraft.assignee_id);
+      const enrichedTask: Task = {
+        ...saved,
+        assignee: assigneeMember?.profile ? { full_name: assigneeMember.profile.full_name, avatar_url: assigneeMember.profile.avatar_url } : null,
+      };
+      setTasks((current) => [...current, enrichedTask]);
+      setTaskDraft({ title: "", description: "", status: "To Do", priority: "Medium", due_date: "", assignee_id: "" });
       setReloadKey((key) => key + 1);
       notify("Task saved.");
     } catch (reason) {
@@ -423,13 +469,68 @@ export default function ProjectsClient({ userName, openCreate }: { userName: str
     }
   }
 
-  async function updateTask(task: Task, updates: Partial<Pick<Task, "status" | "priority" | "due_date">>) {
+  async function updateTask(task: Task, updates: Partial<Pick<Task, "status" | "priority" | "due_date" | "assignee_id">>) {
+    if (!activeProject || !canUpdateTask(activeProject, task)) {
+      notify("You can update the status only on tasks assigned to you.");
+      return;
+    }
+    if (!canManageProjectTasks(activeProject) && Object.keys(updates).some((field) => field !== "status")) {
+      notify("Only project managers and project leads can edit task details.");
+      return;
+    }
     try {
       const saved = await requestJson<Task>("/api/tasks", { method: "PATCH", body: JSON.stringify({ id: task.id, ...updates }) });
       setTasks((current) => current.map((item) => item.id === task.id ? { ...item, ...saved } : item));
       notify("Task updated.");
     } catch (reason) {
       notify(reason instanceof Error ? reason.message : "Task could not be updated.");
+    }
+  }
+
+  async function deleteTask(task: Task) {
+    if (!activeProject || !canManageProjectTasks(activeProject)) {
+      notify("Only workspace owners, Team Leaders, and project leads can delete tasks.");
+      return;
+    }
+    if (!window.confirm(`Delete task "${task.title}"?`)) return;
+    try {
+      await requestJson<void>(`/api/tasks?id=${encodeURIComponent(task.id)}`, { method: "DELETE" });
+      setTasks((current) => current.filter((item) => item.id !== task.id));
+      notify("Task deleted.");
+    } catch (reason) {
+      notify(reason instanceof Error ? reason.message : "Task could not be deleted.");
+    }
+  }
+
+  async function addProjectMember(profileId: string, role = "member") {
+    if (!activeProject || !canDeleteProjects) return;
+    try {
+      await requestJson("/api/project-members", {
+        method: "POST",
+        body: JSON.stringify({ project_id: activeProject.id, profile_id: profileId, role }),
+      });
+      setProjects((current) => current.map((p) => p.id === activeProject.id
+        ? { ...p, project_members: [...(p.project_members ?? []).filter((m) => m.profile_id !== profileId), { profile_id: profileId, role }] }
+        : p));
+      notify("Project member added.");
+    } catch (reason) {
+      notify(reason instanceof Error ? reason.message : "Could not add project member.");
+    }
+  }
+
+  async function removeProjectMember(profileId: string) {
+    if (!activeProject || !canDeleteProjects) return;
+    try {
+      await requestJson("/api/project-members", {
+        method: "DELETE",
+        body: JSON.stringify({ project_id: activeProject.id, profile_id: profileId }),
+      });
+      setProjects((current) => current.map((p) => p.id === activeProject.id
+        ? { ...p, project_members: (p.project_members ?? []).filter((m) => m.profile_id !== profileId) }
+        : p));
+      notify("Project member removed.");
+    } catch (reason) {
+      notify(reason instanceof Error ? reason.message : "Could not remove project member.");
     }
   }
 
@@ -467,7 +568,7 @@ export default function ProjectsClient({ userName, openCreate }: { userName: str
           <span className="projects-progress-track"><i style={{ width: `${metrics.progress}%`, background: project.color }} /></span>
           <span className="projects-card-bottom"><span>{metrics.total} {metrics.total === 1 ? "task" : "tasks"}</span><span className="projects-member-stack">{assignedMembers.length ? assignedMembers.slice(0, 4).map((member) => <i key={member.profile_id} title={member.profile?.full_name ?? "Workspace member"}>{initials(member.profile?.full_name ?? "Member")}</i>) : <small>No project members</small>}</span></span>
         </button>
-        <div className="projects-card-actions"><button type="button" onClick={() => setDraft({ id: project.id, name: project.name, description: project.description, status: project.status, color: project.color, start_date: project.start_date ?? "", due_date: project.due_date ?? "" })}>Edit</button><button type="button" onClick={() => void deleteProject(project)} disabled={!canDeleteProjects} title={canDeleteProjects ? "Delete project" : "Only workspace owners and admins can delete projects"}><Trash2 size={14} /><span className="sr-only">Delete project</span></button></div>
+        <div className="projects-card-actions">{canDeleteProjects && <button type="button" onClick={() => setDraft({ id: project.id, name: project.name, description: project.description, status: project.status, color: project.color, start_date: project.start_date ?? "", due_date: project.due_date ?? "" })}>Edit</button>}{canDeleteProjects && <button type="button" onClick={() => void deleteProject(project)} title="Delete project"><Trash2 size={14} /><span className="sr-only">Delete project</span></button>}</div>
       </article>
     );
   }
@@ -489,7 +590,7 @@ export default function ProjectsClient({ userName, openCreate }: { userName: str
           {navItems.map(({ label, icon: Icon }) => <Link href={`/?view=${encodeURIComponent(label)}`} key={label} className="projects-nav-link"><Icon size={17} />{label}</Link>)}
           <Link href="/projects" className="projects-nav-link selected"><FolderKanban size={17} />Projects</Link>
           <button type="button" className="projects-nav-link" onClick={() => router.push("/?view=Overview")}><Bell size={17} />Notifications</button>
-          <button type="button" className="projects-nav-link" onClick={() => router.push("/?view=Overview")}><Settings size={17} />Settings</button>
+          <button type="button" className="projects-nav-link" onClick={() => router.push("/settings")}><Settings size={17} />Settings</button>
         </nav>
         <div className="projects-sidebar-footer">
           <Link className="projects-nav-link" href="/"><CircleHelp size={17} />Help center</Link>
@@ -504,7 +605,7 @@ export default function ProjectsClient({ userName, openCreate }: { userName: str
             <>
               <div className="projects-page-heading projects-detail-heading">
                 <div><button className="projects-back" type="button" onClick={() => setDetailId("")}><ArrowLeft size={15} /> All projects</button><span className="projects-kicker">PROJECT OVERVIEW</span><h1>{activeProject.name}</h1><p>{activeProject.description || "No description added."}</p></div>
-                <div className="projects-heading-actions"><button className="projects-button secondary" type="button" onClick={() => setDraft({ id: activeProject.id, name: activeProject.name, description: activeProject.description, status: activeProject.status, color: activeProject.color, start_date: activeProject.start_date ?? "", due_date: activeProject.due_date ?? "" })}>Edit project</button><button className="projects-button primary" type="button" onClick={() => setTaskDraft({ title: "", status: "To Do", priority: "Medium", due_date: "" })}><Plus size={16} /> Add task</button></div>
+                <div className="projects-heading-actions">{canDeleteProjects && <button className="projects-button secondary" type="button" onClick={() => setDraft({ id: activeProject.id, name: activeProject.name, description: activeProject.description, status: activeProject.status, color: activeProject.color, start_date: activeProject.start_date ?? "", due_date: activeProject.due_date ?? "" })}>Edit project</button>}{canManageProjectTasks(activeProject) && <button className="projects-button primary" type="button" onClick={() => setTaskDraft({ title: "", status: "To Do", priority: "Medium", due_date: "", assignee_id: "" })}><Plus size={16} /> Add task</button>}</div>
               </div>
               <section className="projects-overview-grid">
                 <div className="projects-overview-card"><small>STATUS</small><span className={`projects-status status-${activeProject.status.toLowerCase().replaceAll(" ", "-")}`}>{activeProject.status}</span></div>
@@ -515,24 +616,70 @@ export default function ProjectsClient({ userName, openCreate }: { userName: str
               <div className="projects-detail-columns">
                 <section className="projects-panel projects-tasks-panel">
                   <div className="projects-panel-heading"><div><h2>Tasks</h2><p>Status, priority, and deadlines for this project.</p></div><span>{activeProjectTasks.length}</span></div>
-                  <form className="projects-task-create" onSubmit={createTask}>
+                  {canManageProjectTasks(activeProject) ? <form className="projects-task-create" onSubmit={createTask}>
                     <input aria-label="New task title" required maxLength={200} value={taskDraft.title} onChange={(event) => setTaskDraft({ ...taskDraft, title: event.target.value })} placeholder="Add a task to this project…" />
+                    <textarea aria-label="Task description" maxLength={10000} value={taskDraft.description ?? ""} onChange={(event) => setTaskDraft({ ...taskDraft, description: event.target.value })} placeholder="Task description (optional)" />
+                    <select aria-label="New task assignee" value={taskDraft.assignee_id} onChange={(event) => setTaskDraft({ ...taskDraft, assignee_id: event.target.value })}>
+                      <option value="">Unassigned</option>
+                      {members.map((m) => <option key={m.profile_id} value={m.profile_id}>{m.profile?.full_name ?? "Member"}</option>)}
+                    </select>
                     <select aria-label="New task status" value={taskDraft.status} onChange={(event) => setTaskDraft({ ...taskDraft, status: event.target.value as TaskStatus })}>{taskStatuses.map((status) => <option key={status}>{status}</option>)}</select>
                     <select aria-label="New task priority" value={taskDraft.priority} onChange={(event) => setTaskDraft({ ...taskDraft, priority: event.target.value as TaskPriority })}>{taskPriorities.map((priority) => <option key={priority}>{priority}</option>)}</select>
                     <input aria-label="New task due date" type="date" value={taskDraft.due_date} onChange={(event) => setTaskDraft({ ...taskDraft, due_date: event.target.value })} />
                     <button className="projects-button primary" type="submit" disabled={taskBusy}>{taskBusy ? "Adding…" : <><Plus size={15} /> Add</>}</button>
-                  </form>
+                  </form> : <p className="projects-muted">Only project leads and workspace managers can create or assign tasks. You can change the status of tasks assigned to you.</p>}
                   {activeProjectTasks.length ? <div className="projects-task-list">{activeProjectTasks.map((task) => <div className="projects-task-row" key={task.id}>
-                    <div className="projects-task-title"><b>{task.title}</b><small>{task.assignee?.full_name ? `Assigned to ${task.assignee.full_name}` : "Unassigned"} · {task.comments?.[0]?.count ?? 0} comments</small></div>
-                    <select aria-label={`Status for ${task.title}`} value={task.status} onChange={(event) => void updateTask(task, { status: event.target.value as TaskStatus })}>{taskStatuses.map((status) => <option key={status}>{status}</option>)}</select>
-                    <select aria-label={`Priority for ${task.title}`} value={task.priority} onChange={(event) => void updateTask(task, { priority: event.target.value as TaskPriority })}>{taskPriorities.map((priority) => <option key={priority}>{priority}</option>)}</select>
-                    <span className="projects-task-due"><CalendarDays size={14} />{displayDate(task.due_date)}</span>
-                    <button className="projects-comment-toggle" type="button" onClick={() => setOpenComments(openComments === task.id ? "" : task.id)}><MessageCircle size={15} />{openComments === task.id ? "Hide comments" : "Comments"}</button>
+                    <div className="projects-task-title"><b>{task.title}</b>{task.description && <small>{task.description}</small>}<small>{task.assignee?.full_name ? `Assigned to ${task.assignee.full_name}` : "Unassigned"} · {task.comments?.[0]?.count ?? 0} comments</small></div>
+                    <select aria-label={`Assignee for ${task.title}`} value={task.assignee_id ?? ""} disabled={!canManageProjectTasks(activeProject)} onChange={(event) => {
+                      const nextId = event.target.value || null;
+                      const nextMember = members.find((m) => m.profile_id === nextId);
+                      void updateTask(task, { assignee_id: nextId }).then(() => {
+                        setTasks((cur) => cur.map((t) => t.id === task.id ? { ...t, assignee_id: nextId, assignee: nextMember?.profile ? { full_name: nextMember.profile.full_name, avatar_url: nextMember.profile.avatar_url } : null } : t));
+                      });
+                    }}>
+                      <option value="">Unassigned</option>
+                      {members.map((m) => <option key={m.profile_id} value={m.profile_id}>{m.profile?.full_name ?? "Member"}</option>)}
+                    </select>
+                    <select aria-label={`Status for ${task.title}`} value={task.status} disabled={!canUpdateTask(activeProject, task)} onChange={(event) => void updateTask(task, { status: event.target.value as TaskStatus })}>{taskStatuses.map((status) => <option key={status}>{status}</option>)}</select>
+                    <select aria-label={`Priority for ${task.title}`} value={task.priority} disabled={!canManageProjectTasks(activeProject)} onChange={(event) => void updateTask(task, { priority: event.target.value as TaskPriority })}>{taskPriorities.map((priority) => <option key={priority}>{priority}</option>)}</select>
+                    <input type="date" aria-label={`Due date for ${task.title}`} value={task.due_date ?? ""} disabled={!canManageProjectTasks(activeProject)} onChange={(event) => void updateTask(task, { due_date: event.target.value || null })} style={{ fontSize: "11px", padding: "2px 4px", border: "1px solid var(--projects-line)", borderRadius: "4px", background: "transparent", color: "inherit" }} />
+                    <button className="projects-comment-toggle" type="button" onClick={() => setOpenComments(openComments === task.id ? "" : task.id)}><MessageCircle size={15} />{openComments === task.id ? "Hide" : "Comments"}</button>
+                    {canManageProjectTasks(activeProject) && (
+                      <button type="button" className="projects-icon-button" style={{ color: "#d84f5d" }} title="Delete task" aria-label={`Delete task ${task.title}`} onClick={() => void deleteTask(task)}>
+                        <Trash2 size={14} />
+                      </button>
+                    )}
                     {openComments === task.id && <TaskComments taskId={task.id} />}
                   </div>)}</div> : <div className="projects-empty projects-empty-small"><Check size={19} /><b>No tasks yet</b><span>Add the first task above to start tracking work.</span></div>}
                 </section>
                 <aside className="projects-detail-aside">
-                  <section className="projects-panel"><div className="projects-panel-heading"><div><h2>Project team</h2><p>Assigned workspace members</p></div></div>{membersFor(activeProject).length ? membersFor(activeProject).map((member) => <div className="projects-team-row" key={member.profile_id}><span>{initials(member.profile?.full_name ?? "Member")}</span><div><b>{member.profile?.full_name ?? "Workspace member"}</b><small>{member.role}</small></div></div>) : <p className="projects-muted">No project members assigned.</p>}</section>
+                  <section className="projects-panel">
+                    <div className="projects-panel-heading"><div><h2>Project team</h2><p>Assigned workspace members</p></div></div>
+                    {canDeleteProjects && (
+                      <div style={{ display: "flex", gap: "6px", marginBottom: "12px" }}>
+                        <select aria-label="Add project member" defaultValue="" style={{ flex: 1, fontSize: "11px", padding: "4px 6px", borderRadius: "6px", border: "1px solid var(--projects-line)", background: "var(--projects-surface)", color: "inherit" }} onChange={(e) => { if (e.target.value) { void addProjectMember(e.target.value); e.target.value = ""; } }}>
+                          <option value="" disabled>+ Add team member…</option>
+                          {members.filter((m) => !(activeProject.project_members ?? []).some((pm) => pm.profile_id === m.profile_id)).map((m) => (
+                            <option key={m.profile_id} value={m.profile_id}>{m.profile?.full_name ?? "Member"}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    {membersFor(activeProject).length ? membersFor(activeProject).map((member) => {
+                      const pmRole = (activeProject.project_members ?? []).find((pm) => pm.profile_id === member.profile_id)?.role ?? "member";
+                      return (
+                        <div className="projects-team-row" key={member.profile_id}>
+                          <span>{initials(member.profile?.full_name ?? "Member")}</span>
+                          <div><b>{member.profile?.full_name ?? "Workspace member"}</b><small>{pmRole}</small></div>
+                          {canDeleteProjects && (
+                            <button type="button" className="projects-icon-button" style={{ marginLeft: "auto", color: "#d84f5d" }} title="Remove from project" aria-label={`Remove member from project`} onClick={() => void removeProjectMember(member.profile_id)}>
+                              <Trash2 size={13} />
+                            </button>
+                          )}
+                        </div>
+                      );
+                    }) : <p className="projects-muted">No project members assigned.</p>}
+                  </section>
                   <section className="projects-panel"><div className="projects-panel-heading"><div><h2>Recent activity</h2><p>Workspace activity for this project</p></div><Clock3 size={16} /></div>{projectActivity.length ? projectActivity.slice(0, 8).map((item) => <p className="projects-activity-row" key={item.id}><b>{item.actor?.full_name ?? "Workspace member"}</b><span>{item.action.replaceAll("_", " ")}</span><small>{displayDate(item.created_at.slice(0, 10))}</small></p>) : <p className="projects-muted">No recent project activity.</p>}</section>
                   <button className="projects-delete-project" type="button" disabled={!canDeleteProjects} onClick={() => void deleteProject(activeProject)}><Trash2 size={15} />Delete project</button>
                 </aside>
@@ -542,7 +689,7 @@ export default function ProjectsClient({ userName, openCreate }: { userName: str
             <>
               <div className="projects-page-heading">
                 <div><span className="projects-kicker">YOUR WORKSPACE</span><h1>Projects</h1><p>Plan work, track progress, and keep your team aligned.</p></div>
-                <div className="projects-heading-actions"><button className="projects-button secondary" type="button" onClick={() => void addDemoProjects()} disabled={!workspaceId || demoBusy}>{demoBusy ? "Adding demos…" : <><Plus size={16} /> Add Demo Projects</>}</button><button className="projects-button primary" type="button" onClick={() => setDraft({ name: "", description: "", status: "Planning", color: "#7968e8", start_date: "", due_date: "" })} disabled={!workspaceId}><Plus size={16} /> Create project</button></div>
+                <div className="projects-heading-actions">{canDeleteProjects && <button className="projects-button secondary" type="button" onClick={() => void addDemoProjects()} disabled={!workspaceId || demoBusy}>{demoBusy ? "Adding demos…" : <><Plus size={16} /> Add Demo Projects</>}</button>}{canDeleteProjects && <button className="projects-button primary" type="button" onClick={() => setDraft(emptyProjectDraft())} disabled={!workspaceId}><Plus size={16} /> Create project</button>}</div>
               </div>
               <section className="projects-toolbar">
                 <label className="projects-search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search projects by name…" /></label>
@@ -553,7 +700,7 @@ export default function ProjectsClient({ userName, openCreate }: { userName: str
               {loadError && <div className="projects-error" role="alert"><b>Workspace data could not be loaded.</b><span>{loadError}</span><button type="button" onClick={() => setReloadKey((key) => key + 1)}>Try again</button></div>}
               {initializing || loading ? <div className="projects-grid">{Array.from({ length: 6 }, (_, index) => <div className="projects-skeleton" key={index}><i /><span /><span /><b /></div>)}</div>
                 : !workspaceId ? <div className="projects-empty"><FolderKanban size={25} /><h2>No workspace found</h2><p>Create or join a workspace before managing projects.</p><Link className="projects-button primary" href="/">Open workspace setup <ArrowRight size={15} /></Link></div>
-                  : !loadError && projects.length === 0 ? <div className="projects-empty"><FolderKanban size={25} /><h2>No projects yet</h2><p>Create a project to give your team a shared plan, or add sample projects to explore Orbit.</p><div><button className="projects-button primary" type="button" onClick={() => setDraft({ name: "", description: "", status: "Planning", color: "#7968e8", start_date: "", due_date: "" })}><Plus size={15} /> Create your first project</button><button className="projects-button secondary" type="button" onClick={() => void addDemoProjects()} disabled={demoBusy}>Add Demo Projects</button></div></div>
+                  : !loadError && projects.length === 0 ? <div className="projects-empty"><FolderKanban size={25} /><h2>No projects yet</h2><p>{canDeleteProjects ? "Create a project to give your team a shared plan, or add sample projects to explore Orbit." : "You do not currently have any projects assigned to you."}</p>{canDeleteProjects && <div><button className="projects-button primary" type="button" onClick={() => setDraft(emptyProjectDraft())}><Plus size={15} /> Create your first project</button><button className="projects-button secondary" type="button" onClick={() => void addDemoProjects()} disabled={demoBusy}>Add Demo Projects</button></div>}</div>
                     : !loadError && visibleProjects.length === 0 ? <div className="projects-empty"><Search size={24} /><h2>No matching projects</h2><p>Try changing the search term or status filter.</p><button className="projects-button secondary" type="button" onClick={() => { setQuery(""); setStatusFilter("All statuses"); }}>Clear filters</button></div>
                       : !loadError && <div className={`projects-grid ${view === "list" ? "list-view" : ""}`}>{visibleProjects.map(projectCard)}</div>}
             </>

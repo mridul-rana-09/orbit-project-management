@@ -1,0 +1,276 @@
+.settings-page {
+  min-height: 100vh;
+  background: var(--bg);
+}
+
+.settings-topbar {
+  min-height: 62px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 max(24px, calc((100vw - 1180px) / 2));
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.settings-brand,
+.settings-account,
+.settings-account button,
+.settings-back,
+.settings-theme-row,
+.settings-form-footer {
+  display: flex;
+  align-items: center;
+}
+
+.settings-brand {
+  gap: 9px;
+  color: var(--text);
+  text-decoration: none;
+  font-size: 18px;
+  letter-spacing: -.5px;
+}
+
+.settings-brand .brand-mark {
+  display: grid;
+  place-items: center;
+  color: white;
+  font-size: 18px;
+}
+
+.settings-account {
+  gap: 17px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.settings-account button,
+.settings-back {
+  gap: 7px;
+  color: var(--purple);
+  text-decoration: none;
+  font-size: 11px;
+}
+
+.settings-account button {
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+}
+
+.settings-content {
+  width: min(100% - 48px, 980px);
+  margin: 0 auto;
+  padding: 27px 0 60px;
+}
+
+.settings-back {
+  margin-bottom: 27px;
+}
+
+.settings-heading {
+  margin-bottom: 21px;
+}
+
+.settings-heading h1 {
+  margin: 8px 0 5px;
+  color: var(--text);
+  font-size: 26px;
+  letter-spacing: -.8px;
+}
+
+.settings-heading p,
+.settings-card-heading p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.settings-card {
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.settings-loading {
+  color: var(--muted);
+}
+
+.settings-card-heading {
+  margin-bottom: 19px;
+}
+
+.settings-card-heading h2 {
+  margin: 0 0 5px;
+  color: var(--text);
+  font-size: 15px;
+}
+
+.settings-field {
+  display: grid;
+  gap: 7px;
+  margin: 0 0 15px;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.settings-field input,
+.settings-field select {
+  width: 100%;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.settings-field input:disabled {
+  color: var(--muted);
+  opacity: .8;
+}
+
+.settings-form-footer {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-form-footer > span,
+.settings-theme-row span {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.settings-account-details {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+}
+
+.settings-account-details > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 15px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.settings-account-details > div:last-child {
+  padding-bottom: 0;
+  border: 0;
+}
+
+.settings-account-details dt {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.settings-account-details dd {
+  overflow-wrap: anywhere;
+  margin: 0;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: right;
+}
+
+.settings-theme-row {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-theme-row > div {
+  display: grid;
+  gap: 5px;
+}
+
+.settings-theme-row b {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.settings-message {
+  margin-bottom: 13px;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 11px;
+}
+
+.settings-message.error {
+  color: #a53d43;
+  border-color: #f1c8ca;
+  background: #fff6f6;
+}
+
+.settings-message.success {
+  color: #237c63;
+  border-color: #c9e9dd;
+  background: #f3fbf7;
+}
+
+.settings-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.dark .settings-message.error {
+  color: #f0a0a2;
+  background: #2b1e25;
+  border-color: #55343b;
+}
+
+.dark .settings-message.success {
+  color: #8bd1b8;
+  background: #1c2926;
+  border-color: #29473e;
+}
+
+@media (max-width: 680px) {
+  .settings-topbar {
+    padding: 0 18px;
+  }
+
+  .settings-content {
+    width: min(100% - 32px, 520px);
+    padding-top: 20px;
+  }
+
+  .settings-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-card {
+    padding: 16px;
+  }
+}
+
+@media (max-width: 420px) {
+  .settings-account {
+    gap: 8px;
+  }
+
+  .settings-account > span {
+    display: none;
+  }
+
+  .settings-form-footer,
+  .settings-theme-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
